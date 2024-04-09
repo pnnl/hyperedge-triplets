@@ -1,44 +1,13 @@
 # Hyperedge Triplets
-This repository contains implementations of the top-k hyperedge triplet retrieval algorithm from this [paper](https://arxiv.org/pdf/2311.07783.pdf).
+This repository contains implementations of the top-k hyperedge triplet retrieval algorithm.
 
-If you use this code, please cite
-
-@article{niu2023size,
-  title={Size-Aware Hypergraph Motifs},
-  author={Niu, Jason and Amburg, Ilya D and Aksoy, Sinan G and Sar{\i}y{\"u}ce, Ahmet Erdem},
-  journal={arXiv preprint arXiv:2311.07783},
-  year={2023}
-}
-
-There are three implementations: (1) HyperNetX, (2) standalone Python, and (3) C++ with a Python wrapper. Each implementation has a Jupyter notebook tutorial. 
-
-## HyperNetX
-
-The HyperNetX folder contains code that will be embeded in the hypergraph analytics library [HyperNetX](https://pnnl.github.io/HyperNetX/) (hnx). Steps to add max_triplet to HyperNetX:
-
-(1) Clone HyperNetX from https://github.com/pnnl/HyperNetX.
-    - We refer to this as HyperNetX-master
-
-(2) Add max_triplet.py to HyperNetX-master/hypernetx/algorithms
-
-(3) Add
-        from .max_triplet import *
-    to HyperNetX-master/hypernetx/algorithms/__init__.py
-
-(4) Add test_max_triplet.py to HyperNetX-master/hypernetx/algorithms/tests
-
-(5) Add Tutorial 14 - Maximum Hyperedge Triplets.ipynb to HyperNetX-master/tutorials
-    - Change Tutorial 14 to a later number if necessary
-
-(6) Add images/ShadedTriplet.png to HyperNetX-master/tutorials/images
-
-## Standalone in Python
-
-The python_standalone folder contains code that you could run independently of HyperNetX. 
+Note: All author-related information has been removed from this temporary repository.
+This repository should only be used for reproducibility in the double-blinded review process.
+The final published paper will have the full version of this repository with complete copyright information.
 
 ## C++ with Python Wrapper
 
-The python_wrapper folder contains code in C++ with a Python wrapper. This is the fastest implementation. 
+The python_wrapper folder contains code in C++ with a Python wrapper.
 
 Portable memory mapping class from https://github.com/stbrumme/portable-memory-mapping.
 

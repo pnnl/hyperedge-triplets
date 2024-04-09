@@ -9,10 +9,6 @@ These weights correspond to the three hyperedges which
 (3) are the most correlated with one another, respectively.
 We find maximum hyperedge triplets by iterating through hyperedges which can exceed the current maximum weight.
 
-Maximum hyperedge triplets for hypergraphs are discussed in depth in:
-"Size-Aware Hyperedge Motifs"
-When available, this will be replaced by the paper's citation.
-
 """
 
 import ctypes
@@ -35,10 +31,7 @@ class triplet(ctypes.Structure):
 def max_independent(file_path, min_weight=0):
     """
     Returns the hyperedge triplet with the highest independent weight.
-    Equivalent to "Max-Independent" (Algorithm 2) in:
-
-    "Size-Aware Hyperedge Motifs"
-    When available, this will be replaced by the paper's citation.
+    Equivalent to "Max-Independent"
 
     Parameters
     ----------
@@ -96,10 +89,7 @@ def max_independent(file_path, min_weight=0):
 def max_disjoint(file_path, min_weight=0):
     """
     Returns the hyperedge triplet with the highest disjoint weight.
-    Equivalent to "Max-Disjoint" (Algorithm 2) in:
-
-    "Size-Aware Hyperedge Motifs"
-    When available, this will be replaced by the paper's citation.
+    Equivalent to "Max-Disjoint"
 
     Parameters
     ----------
@@ -157,10 +147,7 @@ def max_disjoint(file_path, min_weight=0):
 def max_common(file_path, min_weight=0):
     """
     Returns the hyperedge triplet with the highest common weight.
-    Equivalent to "Max-Common" (Algorithm 2) in:
-
-    "Size-Aware Hyperedge Motifs"
-    When available, this will be replaced by the paper's citation.
+    Equivalent to "Max-Common"
 
     Parameters
     ----------
