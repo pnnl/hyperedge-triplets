@@ -1,6 +1,6 @@
 import pytest
 import warnings
-from hypernetx.algorithms.max_triplet import *
+from max_triplet import *
 
 warnings.simplefilter("ignore")
 
