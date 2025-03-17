@@ -3,11 +3,13 @@ This repository contains implementations of the top-k hyperedge triplet retrieva
 
 If you use this code, please cite
 
-@article{niu2023size,
-  title={Size-Aware Hypergraph Motifs},
+@inproceedings{niu2024retrieving,
+  title={Retrieving Top-k Hyperedge Triplets: Models and Applications},
   author={Niu, Jason and Amburg, Ilya D and Aksoy, Sinan G and Sar{\i}y{\"u}ce, Ahmet Erdem},
-  journal={arXiv preprint arXiv:2311.07783},
-  year={2023}
+  booktitle={2024 IEEE International Conference on Big Data (BigData)},
+  pages={630--639},
+  year={2024},
+  organization={IEEE}
 }
 
 There are three implementations: (1) HyperNetX, (2) standalone Python, and (3) C++ with a Python wrapper. Each implementation has a Jupyter notebook tutorial. 
@@ -25,12 +27,13 @@ The HyperNetX folder contains code that will be embeded in the hypergraph analyt
         from .max_triplet import *
     to HyperNetX-master/hypernetx/algorithms/__init__.py
 
-(4) Add test_max_triplet.py to HyperNetX-master/hypernetx/algorithms/tests
+(4) Add test_max_triplet.py to HyperNetX-master/hypernetx/tests/algorithms
 
-(5) Add Tutorial 14 - Maximum Hyperedge Triplets.ipynb to HyperNetX-master/tutorials
-    - Change Tutorial 14 to a later number if necessary
+(5) Add Advanced 8 - Maximum Hyperedge Triplets.ipynb to HyperNetX-master/tutorials/advanced
+    - Change Advanced 8 to a later number if necessary
 
 (6) Add images/ShadedTriplet.png to HyperNetX-master/tutorials/images
+
 
 ## Standalone in Python
 
@@ -67,7 +70,3 @@ Example dataset: <br />
     0 0 <br />
     0 1 <br />
     1 0
-
-
-
-

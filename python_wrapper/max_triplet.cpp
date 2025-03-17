@@ -1,4 +1,5 @@
 #include <vector>
+#include <iostream>
 #include "parallel_hashmap/phmap.h"
 #include "parallel_hashmap/phmap_utils.h"
 #include "portable-memory-mapping-master/MemoryMapped.h"
@@ -76,8 +77,9 @@ void readGraph(const char* file_path, graph& U, graph& V) {
     }
 }
 
+
 // (𝛼, 𝛽)-core decomposition and decreasing degree ordering
-void preProcessing(graph& U, graph& V, const int Kv, std::vector<int>& id_to_v) {
+void preProcessing(graph& U, graph& V, const int Kv, std::vector<int>& id_to_v, int& target_hyperedge) {
 
     const int vLeft = U.size();
     const int vRight = V.size();
@@ -129,6 +131,7 @@ void preProcessing(graph& U, graph& V, const int Kv, std::vector<int>& id_to_v) 
     }
 
 
+    int updated_target = -1;
     // calculate new ids for hyperedges in V by decreasing degree
     std::sort(idx.begin(), idx.end(), [&Dv](int v1, int v2) {return Dv[v1] > Dv[v2];});
     std::vector<int> v_to_id(vRight);
@@ -140,8 +143,13 @@ void preProcessing(graph& U, graph& V, const int Kv, std::vector<int>& id_to_v) 
         }
         v_to_id[v] = max_id;
         id_to_v[max_id] = v;
+        if (updated_target == -1 && target_hyperedge != -1 && v == target_hyperedge) {
+            updated_target = max_id;
+        }
         ++max_id;
     }
+
+    target_hyperedge = updated_target;
 
     // update U and V with new ids and sort neighbor lists in ascending order
     graph U2(vLeft2);
@@ -164,6 +172,12 @@ void preProcessing(graph& U, graph& V, const int Kv, std::vector<int>& id_to_v) 
     }
     U = std::move(U2);
     V = std::move(V2);
+}
+
+// overloaded function for both max_triplets and local_triplets
+void preProcessing(graph& U, graph& V, const int Kv, std::vector<int>& id_to_v) {
+    int target_hyperedge = -1;
+    preProcessing(U, V, Kv, id_to_v, target_hyperedge);
 }
 
 // size of the intersection between two sorted vectors
@@ -418,7 +432,7 @@ extern "C" triplet* basicCommon(const char* dataset_path, int maxWeight) {
                     const std::vector<int>& ac = intersections[a][c];
                     const int acl = ac.size();
 
-                    int commonWeight = 0;
+                    float commonWeight = 0;
                     if (abl < bcl) {
                         commonWeight = intersectionSize(ab, ac);
                     }
@@ -440,7 +454,7 @@ extern "C" triplet* basicCommon(const char* dataset_path, int maxWeight) {
 }
 
 // hyperedge triplet with maximum independent weight (with early stopping)
-extern "C" triplet* maxIndependent(const char* dataset_path, float maxWeight) {
+extern "C" triplet* maxIndependent(const char* dataset_path, const int k, float maxWeight) {
 
     graph U, V;
 
@@ -452,8 +466,8 @@ extern "C" triplet* maxIndependent(const char* dataset_path, float maxWeight) {
 
     const int vRight = V.size();
 
-    triplet* maxTriplet = new triplet();
-    maxTriplet->weight = maxWeight;
+    triplet* maxTriplets = new triplet[k];
+    int maxTriplets_sz = 0;
 
     vecMapVec intersections(vRight);
 
@@ -515,11 +529,19 @@ extern "C" triplet* maxIndependent(const char* dataset_path, float maxWeight) {
                             }
 
                             if (independentWeight > maxWeight) {
-                                maxTriplet->weight = independentWeight;
-                                maxTriplet->v1 = id_to_v[a];
-                                maxTriplet->v2 = id_to_v[b];
-                                maxTriplet->v3 = id_to_v[c];
-                                maxWeight = independentWeight;
+
+                                const triplet t = {independentWeight, id_to_v[a], id_to_v[b], id_to_v[c]};
+                                const int dist = std::lower_bound(maxTriplets, maxTriplets + maxTriplets_sz, t, [](const triplet& a, const triplet& b){return a.weight > b.weight;}) - maxTriplets;
+                                if (maxTriplets_sz < k) {
+                                    ++maxTriplets_sz;
+                                }
+                                for (int after_idx = maxTriplets_sz - 1; after_idx > dist; --after_idx) {
+                                    maxTriplets[after_idx] = maxTriplets[after_idx - 1];
+                                }
+                                maxTriplets[dist] = t;
+                                if (maxTriplets_sz == k) {
+                                    maxWeight = maxTriplets[maxTriplets_sz - 1].weight;
+                                }
                             }
                         }
 
@@ -541,11 +563,17 @@ extern "C" triplet* maxIndependent(const char* dataset_path, float maxWeight) {
         }
     }
 
-    return maxTriplet;
+    while (maxTriplets_sz < k) {
+        const triplet t = {-1, -1, -1, -1};
+        maxTriplets[maxTriplets_sz] = t;
+        ++maxTriplets_sz;
+    }
+
+    return maxTriplets;
 }
 
 // hyperedge triplet with maximum common weight (with early stopping)
-extern "C" triplet* maxDisjoint(const char* dataset_path, float maxWeight) {
+extern "C" triplet* maxDisjoint(const char* dataset_path, const int k, float maxWeight) {
 
     graph U, V;
 
@@ -557,8 +585,8 @@ extern "C" triplet* maxDisjoint(const char* dataset_path, float maxWeight) {
 
     const int vRight = V.size();
 
-    triplet* maxTriplet = new triplet();
-    maxTriplet->weight = maxWeight;
+    triplet* maxTriplets = new triplet[k];
+    int maxTriplets_sz = 0;
 
     vecMapVec intersections(vRight);
 
@@ -598,20 +626,27 @@ extern "C" triplet* maxDisjoint(const char* dataset_path, float maxWeight) {
                         float disjointWeight = std::min({abl, bcl, acl});
 
                         if (disjointWeight > maxWeight) {
+                            int abcl;
                             if (abl < bcl) {
-                                const int abcl = intersectionSize(ab, ac);
-                                disjointWeight = (float) (disjointWeight - abcl) / (float) (abcl + 1);
+                                abcl = intersectionSize(ab, ac);
                             }
                             else {
-                                const int abcl = intersectionSize(bc, ac);
-                                disjointWeight = (float) (disjointWeight - abcl) / (float) (abcl + 1);
+                                abcl = intersectionSize(bc, ac);
                             }
+                            disjointWeight = (float) (disjointWeight - abcl) / (float) (abcl + 1);
                             if (disjointWeight > maxWeight) {
-                                maxTriplet->weight = disjointWeight;
-                                maxTriplet->v1 = id_to_v[a];
-                                maxTriplet->v2 = id_to_v[b];
-                                maxTriplet->v3 = id_to_v[c];
-                                maxWeight = disjointWeight;
+                                const triplet t = {disjointWeight, id_to_v[a], id_to_v[b], id_to_v[c]};
+                                const int dist = std::lower_bound(maxTriplets, maxTriplets + maxTriplets_sz, t, [](const triplet& a, const triplet& b){return a.weight > b.weight;}) - maxTriplets;
+                                if (maxTriplets_sz < k) {
+                                    ++maxTriplets_sz;
+                                }
+                                for (int after_idx = maxTriplets_sz - 1; after_idx > dist; --after_idx) {
+                                    maxTriplets[after_idx] = maxTriplets[after_idx - 1];
+                                }
+                                maxTriplets[dist] = t;
+                                if (maxTriplets_sz == k) {
+                                    maxWeight = maxTriplets[maxTriplets_sz - 1].weight;
+                                }
                             }
                         }
                     }
@@ -631,13 +666,19 @@ extern "C" triplet* maxDisjoint(const char* dataset_path, float maxWeight) {
         }
 
     }
+
+    while (maxTriplets_sz < k) {
+        const triplet t = {-1, -1, -1, -1};
+        maxTriplets[maxTriplets_sz] = t;
+        ++maxTriplets_sz;
+    }
     
-    return maxTriplet;
+    return maxTriplets;
 }
 
 
 // hyperedge triplet with maximum common weight (with early stopping)
-extern "C" triplet* maxCommon(const char* dataset_path, int maxWeight) {
+extern "C" triplet* maxCommon(const char* dataset_path, const int k, float maxWeight) {
 
     graph U, V;
 
@@ -649,8 +690,8 @@ extern "C" triplet* maxCommon(const char* dataset_path, int maxWeight) {
 
     const int vRight = V.size();
 
-    triplet* maxTriplet = new triplet();
-    maxTriplet->weight = maxWeight;
+    triplet* maxTriplets = new triplet[k];
+    int maxTriplets_sz = 0;
 
     vecMapVec intersections(vRight);
 
@@ -686,7 +727,7 @@ extern "C" triplet* maxCommon(const char* dataset_path, int maxWeight) {
                     if (abl > maxWeight && intersections[c].contains(a)) {
                         const std::vector<int>& ac = intersections[c][a];
                         const int acl = ac.size();
-                        int commonWeight = std::min({abl, acl, bcl});
+                        float commonWeight = std::min({abl, acl, bcl});
                         if (commonWeight > maxWeight) {
                             if (abl < bcl) {
                                 commonWeight = intersectionSize(ab, ac);
@@ -695,11 +736,18 @@ extern "C" triplet* maxCommon(const char* dataset_path, int maxWeight) {
                                 commonWeight = intersectionSize(bc, ac);
                             }
                             if (commonWeight > maxWeight) {
-                                maxTriplet->weight = commonWeight;
-                                maxTriplet->v1 = id_to_v[a];
-                                maxTriplet->v2 = id_to_v[b];
-                                maxTriplet->v3 = id_to_v[c];
-                                maxWeight = commonWeight;
+                                const triplet t = {commonWeight, id_to_v[a], id_to_v[b], id_to_v[c]};
+                                const int dist = std::lower_bound(maxTriplets, maxTriplets + maxTriplets_sz, t, [](const triplet& a, const triplet& b){return a.weight > b.weight;}) - maxTriplets;
+                                if (maxTriplets_sz < k) {
+                                    ++maxTriplets_sz;
+                                }
+                                for (int after_idx = maxTriplets_sz - 1; after_idx > dist; --after_idx) {
+                                    maxTriplets[after_idx] = maxTriplets[after_idx - 1];
+                                }
+                                maxTriplets[dist] = t;
+                                if (maxTriplets_sz == k) {
+                                    maxWeight = maxTriplets[maxTriplets_sz - 1].weight;
+                                }
                             }
                         }
                     }
@@ -719,5 +767,397 @@ extern "C" triplet* maxCommon(const char* dataset_path, int maxWeight) {
 
     }
     
-    return maxTriplet;
+    while (maxTriplets_sz < k) {
+        const triplet t = {-1, -1, -1, -1};
+        maxTriplets[maxTriplets_sz] = t;
+        ++maxTriplets_sz;
+    }
+    
+    return maxTriplets;
+}
+
+// hyperedge triplet with maximum independent weight (with early stopping)
+extern "C" triplet* localIndependent(const char* dataset_path, int target_hyperedge, const int k, float maxWeight) {
+
+    graph U, V;
+
+    readGraph(dataset_path, U, V);
+
+    std::vector<int> id_to_v;
+
+    preProcessing(U, V, maxWeight + 1, id_to_v, target_hyperedge);
+
+    const int a = target_hyperedge;
+    triplet* maxTriplets = new triplet[k];
+    int maxTriplets_sz = 0;
+
+    if (a == -1 || V[a].size() <= maxWeight) {
+        while (maxTriplets_sz < k) {
+            const triplet t = {-1, -1, -1, -1};
+            maxTriplets[maxTriplets_sz] = t;
+            ++maxTriplets_sz;
+        }
+        return maxTriplets;
+    }
+
+    const int da = V[a].size();
+
+    const int vRight = V.size();
+
+    mapVec overlap_a;
+    for (int u : V[a]) {
+        for (int b : U[u]) {
+            if (b == a) {
+                continue;
+            }
+            if (V[b].size() <= maxWeight) {
+                break;
+            }
+            overlap_a[b].emplace_back(u);
+        }
+    }
+    
+    for (int b = 0; b < vRight; ++b) {
+
+        if (b == a) {
+            continue;
+        }
+
+        const int db = V[b].size();
+        if (db <= maxWeight) {
+            break;
+        }
+
+        const std::vector<int>& ab = (overlap_a.contains(b)) ? overlap_a[b] : std::vector<int>();
+        const int abl = ab.size();
+        if ((float) (std::min(da, db) - abl) / (float) (abl + 1) > maxWeight) {
+            continue;
+        }
+
+        mapVec overlap;
+        for (int u : V[b]) {
+            const int c_idx_start = std::distance(U[u].begin(), std::upper_bound(U[u].begin(), U[u].end(), b));
+            const int Du = U[u].size();
+            for (int c_idx = c_idx_start; c_idx < Du; ++c_idx) {
+                const int c = U[u][c_idx];
+                if (c == a) {
+                    continue;
+                }
+                const int dc = V[c].size();
+                if (dc <= maxWeight) {
+                    break;
+                }
+                overlap[c].emplace_back(u);
+            }
+        }
+        for (int c = b + 1; c < vRight; ++c) {
+
+            if (c == a) {
+                continue;
+            }
+
+            const int dc = V[c].size();
+            if (dc <= maxWeight) {
+                break;
+            }
+
+            const std::vector<int>& bc = (overlap.contains(c)) ? overlap[c] : std::vector<int>();
+            const int bcl = bc.size();
+            
+            if ((float) (std::min(db, dc) - bcl) / (float) (bcl + 1) > maxWeight) {
+
+                const std::vector<int>& ac = (overlap_a.contains(c)) ? overlap_a[c] : std::vector<int>();
+                const int acl = ac.size();
+
+                const int x = std::min({da - abl - acl, db - abl - bcl, dc - acl - bcl});
+                int abcl = std::min({abl, bcl, acl});
+
+                float independentWeight = (float) (x + abcl) / (float)(abl + acl + bcl - 2 * abcl + 1);
+
+                if (independentWeight > maxWeight) {
+
+                    if (abcl > 0) {
+                        if (abl < bcl) {
+                            abcl = intersectionSize(ab, ac);
+                            independentWeight = (float) (x + abcl) / (float)(abl + acl + bcl - 2 * abcl + 1);
+                        }
+                        else {
+                            abcl = intersectionSize(bc, ac);
+                            independentWeight = (float) (x + abcl) / (float)(abl + acl + bcl - 2 * abcl + 1);
+                        }
+                    }
+
+                    if (independentWeight > maxWeight) {
+
+                        const triplet t = {independentWeight, id_to_v[a], id_to_v[b], id_to_v[c]};
+                        const int dist = std::lower_bound(maxTriplets, maxTriplets + maxTriplets_sz, t, [](const triplet& a, const triplet& b){return a.weight > b.weight;}) - maxTriplets;
+                        if (maxTriplets_sz < k) {
+                            ++maxTriplets_sz;
+                        }
+                        for (int after_idx = maxTriplets_sz - 1; after_idx > dist; --after_idx) {
+                            maxTriplets[after_idx] = maxTriplets[after_idx - 1];
+                        }
+                        maxTriplets[dist] = t;
+                        if (maxTriplets_sz == k) {
+                            maxWeight = maxTriplets[maxTriplets_sz - 1].weight;
+                        }
+                    }
+                }
+                
+            }
+
+        }
+
+    }
+
+    while (maxTriplets_sz < k) {
+        const triplet t = {-1, -1, -1, -1};
+        maxTriplets[maxTriplets_sz] = t;
+        ++maxTriplets_sz;
+    }
+
+    return maxTriplets;
+}
+
+// hyperedge triplet with maximum common weight (with early stopping)
+extern "C" triplet* localDisjoint(const char* dataset_path, int target_hyperedge, const int k, float maxWeight) {
+
+    graph U, V;
+
+    readGraph(dataset_path, U, V);
+
+    std::vector<int> id_to_v;
+
+    preProcessing(U, V, maxWeight + 1, id_to_v, target_hyperedge);
+
+    const int a = target_hyperedge;
+    triplet* maxTriplets = new triplet[k];
+    int maxTriplets_sz = 0;
+
+    if (a == -1 || (std::floor(V[a].size() / 2) <= maxWeight)) {
+        while (maxTriplets_sz < k) {
+            const triplet t = {-1, -1, -1, -1};
+            maxTriplets[maxTriplets_sz] = t;
+            ++maxTriplets_sz;
+        }
+        return maxTriplets;
+    }
+
+    const int vRight = V.size();
+
+    mapVec overlap_a;
+    for (int u : V[a]) {
+        for (int b : U[u]) {
+            if (b == a) {
+                continue;
+            }
+            if (std::floor(V[b].size() / 2) <= maxWeight) {
+                break;
+            }
+            overlap_a[b].emplace_back(u);
+        }
+    }
+
+    for (int b = 0; b < vRight; ++b) {
+
+        if (b == a) {
+            continue;
+        }
+
+        const int db = V[b].size();
+        if (std::floor(db / 2) <= maxWeight) {
+            break;
+        }
+
+        const std::vector<int>& ab = (overlap_a.contains(b)) ? overlap_a[b] : std::vector<int>();
+        const int abl = ab.size();
+        if (abl <= maxWeight) {
+            continue;
+        }
+        
+        mapVec overlap;
+        for (int u : V[b]) {
+            const int c_idx_start = std::distance(U[u].begin(), std::upper_bound(U[u].begin(), U[u].end(), b));
+            const int Du = U[u].size();
+            for (int c_idx = c_idx_start; c_idx < Du; ++c_idx) {
+                const int c = U[u][c_idx];
+                if (c == a) {
+                    continue;
+                }
+                const int dc = V[c].size();
+                if (std::floor(dc / 2) <= maxWeight) {
+                    break;
+                }
+                overlap[c].emplace_back(u);
+            }
+        }
+        for (mapVec::iterator overlap_it = overlap.begin(); overlap_it != overlap.end(); ++overlap_it) {
+            const std::vector<int>& bc = overlap_it->second;
+            const int bcl = bc.size();
+            if (bcl > maxWeight) {
+                const int c = overlap_it->first;
+                const int dc = V[c].size();
+
+                const std::vector<int>& ac = (overlap_a.contains(c)) ? overlap_a[c] : std::vector<int>();
+                const int acl = ac.size();
+                    
+                float disjointWeight = std::min({abl, bcl, acl});
+
+                if (disjointWeight > maxWeight) {
+                    int abcl;
+                    if (abl < bcl) {
+                        abcl = intersectionSize(ab, ac);
+                    }
+                    else {
+                        abcl = intersectionSize(bc, ac);
+                    }
+
+                    disjointWeight = (float) (disjointWeight - abcl) / (float) (abcl + 1);
+                    if (disjointWeight > maxWeight) {
+                        const triplet t = {disjointWeight, id_to_v[a], id_to_v[b], id_to_v[c]};
+                        const int dist = std::lower_bound(maxTriplets, maxTriplets + maxTriplets_sz, t, [](const triplet& a, const triplet& b){return a.weight > b.weight;}) - maxTriplets;
+                        if (maxTriplets_sz < k) {
+                            ++maxTriplets_sz;
+                        }
+                        for (int after_idx = maxTriplets_sz - 1; after_idx > dist; --after_idx) {
+                            maxTriplets[after_idx] = maxTriplets[after_idx - 1];
+                        }
+                        maxTriplets[dist] = t;
+                        if (maxTriplets_sz == k) {
+                            maxWeight = maxTriplets[maxTriplets_sz - 1].weight;
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+
+    while (maxTriplets_sz < k) {
+        const triplet t = {-1, -1, -1, -1};
+        maxTriplets[maxTriplets_sz] = t;
+        ++maxTriplets_sz;
+    }
+    
+    return maxTriplets;
+}
+
+
+// hyperedge triplet with maximum common weight (with early stopping)
+extern "C" triplet* localCommon(const char* dataset_path, int target_hyperedge, const int k, float maxWeight) {
+
+    graph U, V;
+
+    readGraph(dataset_path, U, V);
+
+    std::vector<int> id_to_v;
+
+    preProcessing(U, V, maxWeight + 1, id_to_v, target_hyperedge);
+
+    const int a = target_hyperedge;
+    triplet* maxTriplets = new triplet[k];
+    int maxTriplets_sz = 0;
+
+    if (a == -1 || V[a].size() <= maxWeight) {
+        while (maxTriplets_sz < k) {
+            const triplet t = {-1, -1, -1, -1};
+            maxTriplets[maxTriplets_sz] = t;
+            ++maxTriplets_sz;
+        }
+        return maxTriplets;
+    }
+
+    const int vRight = V.size();
+
+    mapVec overlap_a;
+    for (int u : V[a]) {
+        for (int b : U[u]) {
+            if (b == a) {
+                continue;
+            }
+            if (V[b].size() <= maxWeight) {
+                break;
+            }
+            overlap_a[b].emplace_back(u);
+        }
+    }
+
+    for (int b = 0; b < vRight; ++b) {
+
+        if (b == a) {
+            continue;
+        }
+
+        const int db = V[b].size();
+        if (db <= maxWeight) {
+            break;
+        }
+
+        const std::vector<int>& ab = (overlap_a.contains(b)) ? overlap_a[b] : std::vector<int>();
+        const int abl = ab.size();
+        if (abl <= maxWeight) {
+            continue;
+        }
+        
+        mapVec overlap;
+        for (int u : V[b]) {
+            const int c_idx_start = std::distance(U[u].begin(), std::upper_bound(U[u].begin(), U[u].end(), b));
+            const int Du = U[u].size();
+            for (int c_idx = c_idx_start; c_idx < Du; ++c_idx) {
+                const int c = U[u][c_idx];
+                if (c == a) {
+                    continue;
+                }
+                const int dc = V[c].size();
+                if (dc <= maxWeight) {
+                    break;
+                }
+                overlap[c].emplace_back(u);
+            }
+        }
+        for (mapVec::iterator overlap_it = overlap.begin(); overlap_it != overlap.end(); ++overlap_it) {
+            const std::vector<int>& bc = overlap_it->second;
+            const int bcl = bc.size();
+            if (bcl > maxWeight) {
+                const int c = overlap_it->first;
+                const int dc = V[c].size();
+
+                const std::vector<int>& ac = (overlap_a.contains(c)) ? overlap_a[c] : std::vector<int>();
+                const int acl = ac.size();
+
+                float commonWeight = std::min({abl, acl, bcl});
+                if (commonWeight > maxWeight) {
+                    if (abl < bcl) {
+                        commonWeight = intersectionSize(ab, ac);
+                    }
+                    else {
+                        commonWeight = intersectionSize(bc, ac);
+                    }
+                    if (commonWeight > maxWeight) {
+                        const triplet t = {commonWeight, id_to_v[a], id_to_v[b], id_to_v[c]};
+                        const int dist = std::lower_bound(maxTriplets, maxTriplets + maxTriplets_sz, t, [](const triplet& a, const triplet& b){return a.weight > b.weight;}) - maxTriplets;
+                        if (maxTriplets_sz < k) {
+                            ++maxTriplets_sz;
+                        }
+                        for (int after_idx = maxTriplets_sz - 1; after_idx > dist; --after_idx) {
+                            maxTriplets[after_idx] = maxTriplets[after_idx - 1];
+                        }
+                        maxTriplets[dist] = t;
+                        if (maxTriplets_sz == k) {
+                            maxWeight = maxTriplets[maxTriplets_sz - 1].weight;
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+    
+    while (maxTriplets_sz < k) {
+        const triplet t = {-1, -1, -1, -1};
+        maxTriplets[maxTriplets_sz] = t;
+        ++maxTriplets_sz;
+    }
+    
+    return maxTriplets;
 }

@@ -8,8 +8,6 @@ These weights correspond to the three hyperedges which
 (1) are the least correlated with one another, 
 (2) have the highest pairwise but not groupwise correlation, and 
 (3) are the most correlated with one another.
-We find maximal hyperedge triplets by iterating through hyperedges 
-which can exceed the current maximum weight.
 
 Hyperedge triplets for hypergraphs are discussed in depth in:        
 
@@ -40,16 +38,19 @@ def add_to_sorted_list(sorted_list, new_dict, key):
     index = bisect.bisect_left([-x[key] for x in sorted_list], value, key=lambda x: x)
     sorted_list.insert(index, new_dict)
 
-def preprocessing(G, cdict, Kv, target_hyperedge = None):
+def preprocessing(nodes, hyperedges, Kv, target_hyperedge = None):
     """
     Performs (𝛼 = 1, 𝛽 = Kv)-core decomposition and decreasing degree ordering.
 
     Parameters
     ----------
-    G : scipy.sparse.csr.csr_matrix
-        Incidence matrix indexed by nodes x hyperedges
-    cdict: dict
-        Dictionary identifying columns with hyperedges
+    nodes, hyperedges : lists of equal length
+        For each index i, nodes[i] is in hyperedges[i].
+        For example, if the edge list composed of (node, hyperedge) pairs is as follows:
+            [(0, 0), (0, 1), (1, 1)]
+        then:
+            nodes      = [0, 0, 1]
+            hyperedges = [0, 1, 1]
     Kv: int
         (𝛼 = 1, 𝛽 = Kv)-core decomposition
     target_hyperedge : string, optional, default : None
@@ -64,9 +65,35 @@ def preprocessing(G, cdict, Kv, target_hyperedge = None):
     id_to_v : list of values
         List of original hyperedge labels whose index corresponds to the new hyperedge id
     """
-    vLeft, vRight = G.get_shape()
+    U = {}
+    V = {}
 
-    G_csc = G.tocsc()
+    node_to_u = {}
+    hyperedge_to_v = {}
+
+    max_u = 0
+    max_v = 0
+
+    num_edges = len(nodes)
+    for i in range(num_edges):
+        node = nodes[i]
+        hyperedge = hyperedges[i]
+        if node not in node_to_u:
+            node_to_u[node] = max_u
+            U[max_u] = set()
+            max_u += 1
+        if hyperedge not in hyperedge_to_v:
+            hyperedge_to_v[hyperedge] = max_v
+            V[max_v] = set()
+            max_v += 1
+        u = node_to_u[node]
+        v = hyperedge_to_v[hyperedge]
+        U[u].add(v)
+        V[v].add(u)
+
+    v_to_hyperedge = {v:hyperedge for hyperedge, v in hyperedge_to_v.items()}
+
+    vLeft, vRight = len(U), len(V)
 
     vLeft2, vRight2 = vLeft, vRight
 
@@ -78,23 +105,17 @@ def preprocessing(G, cdict, Kv, target_hyperedge = None):
     
     idx = [0] * vRight
     for u in range(vLeft):
-        Du[u] = len(G[u].indices)
-        if Du[u] == 0:
-            Ru[u] = True
-            vLeft2 -= 1
+        Du[u] = len(U[u])
     
     for v in range(vRight):
-        Dv[v] = len(G_csc[:,v].indices)
-        if Dv[v] == 0:
-            Rv[v] = True
-            vRight2 -= 1
+        Dv[v] = len(V[v])
         idx[v] = v
     
     for v in range(vRight):
         if not Rv[v] and Dv[v] < Kv:
             Rv[v] = True
             vRight2 -= 1
-            for u in G_csc[:,v].indices:
+            for u in V[v]:
                 if not Ru[u]:
                     Du[u] -= 1
                     if Du[u] == 0:
@@ -119,32 +140,32 @@ def preprocessing(G, cdict, Kv, target_hyperedge = None):
         if Rv[v]:
             break
         v_to_id[v] = max_id
-        id_to_v[max_id] = cdict[v]
-        if updated_target is None and target_hyperedge is not None and cdict[v] == target_hyperedge:
+        id_to_v[max_id] = v_to_hyperedge[v]
+        if updated_target is None and target_hyperedge is not None and v_to_hyperedge[v] == target_hyperedge:
             updated_target = max_id
         max_id += 1
-    
+
     # update U and V with new ids and sort neighbor lists in ascending order
-    U = [[] for _ in range(vLeft2)]
-    V = [[] for _ in range(vRight2)]
+    U2 = [[] for _ in range(vLeft2)]
+    V2 = [[] for _ in range(vRight2)]
     for v in range(vRight):
         if not Rv[v]:
             v_id = v_to_id[v]
-            for u in G_csc[:,v].indices:
+            for u in V[v]:
                 if not Ru[u]:
                     u_id = u_to_id[u]
-                    U[u_id].append(v_id)
-                    V[v_id].append(u_id)
+                    U2[u_id].append(v_id)
+                    V2[v_id].append(u_id)
             
     for u in range(vLeft2):
-        U[u].sort()
+        U2[u].sort()
     
     if target_hyperedge is not None:
-        return U, V, id_to_v, updated_target
+        return U2, V2, id_to_v, updated_target
     else:
-        return U, V, id_to_v
+        return U2, V2, id_to_v
 
-def intersection_size (s1, s2):
+def intersection_size(s1, s2):
     """
     Returns the intersection size between two sorted lists.
 
@@ -213,7 +234,7 @@ def intersection_size_bounded(s1, s2, upper_bound_excl):
             first2 += 1
     return size
 
-def max_independent(H, k=1, min_weight=0):
+def max_independent(nodes, hyperedges, k=1, min_weight=0):
     """
     Returns the hyperedge triplets with the highest independent weights.
 
@@ -221,7 +242,13 @@ def max_independent(H, k=1, min_weight=0):
 
     Parameters
     ----------
-    H : hnx.Hypergraph
+    nodes, hyperedges : lists of equal length
+        For each index i, nodes[i] is in hyperedges[i].
+        For example, if the edge list composed of (node, hyperedge) pairs is as follows:
+            [(0, 0), (0, 1), (1, 1)]
+        then:
+            nodes      = [0, 0, 1]
+            hyperedges = [0, 1, 1]
     k : int, optional, default : 1
         Top-k hyperedge triplets
     min_weight : int, optional, default : 0
@@ -237,9 +264,7 @@ def max_independent(H, k=1, min_weight=0):
             ("v3": third hyperedge)
         or empty list if no hyperedge triplet found
     """
-    G, _, cdict = H.incidence_matrix(index=True)
-
-    U, V, id_to_v = preprocessing(G, cdict, min_weight)
+    U, V, id_to_v = preprocessing(nodes, hyperedges, min_weight)
 
     maxWeight = min_weight - 1
 
@@ -324,7 +349,7 @@ def max_independent(H, k=1, min_weight=0):
     
     return maxTriplets
 
-def max_disjoint(H, k=1, min_weight=0):
+def max_disjoint(nodes, hyperedges, k=1, min_weight=0):
     """
     Returns the hyperedge triplets with the highest disjoint weights.
 
@@ -332,7 +357,13 @@ def max_disjoint(H, k=1, min_weight=0):
 
     Parameters
     ----------
-    H : hnx.Hypergraph
+    nodes, hyperedges : lists of equal length
+        For each index i, nodes[i] is in hyperedges[i].
+        For example, if the edge list composed of (node, hyperedge) pairs is as follows:
+            [(0, 0), (0, 1), (1, 1)]
+        then:
+            nodes      = [0, 0, 1]
+            hyperedges = [0, 1, 1]
     k : int, optional, default : 1
         Top-k hyperedge triplets
     min_weight : int, optional, default : 0
@@ -348,9 +379,7 @@ def max_disjoint(H, k=1, min_weight=0):
             ("v3": third hyperedge)
         or empty list if no hyperedge triplet found
     """
-    G, _, cdict = H.incidence_matrix(index=True)
-
-    U, V, id_to_v = preprocessing(G, cdict, min_weight)
+    U, V, id_to_v = preprocessing(nodes, hyperedges, min_weight)
 
     maxWeight = min_weight - 1
 
@@ -420,7 +449,7 @@ def max_disjoint(H, k=1, min_weight=0):
     
     return maxTriplets
 
-def max_common(H, k=1, min_weight=0):
+def max_common(nodes, hyperedges, k=1, min_weight=0):
     """
     Returns the hyperedge triplets with the highest common weights.
 
@@ -428,7 +457,13 @@ def max_common(H, k=1, min_weight=0):
 
     Parameters
     ----------
-    H : hnx.Hypergraph
+    nodes, hyperedges : lists of equal length
+        For each index i, nodes[i] is in hyperedges[i].
+        For example, if the edge list composed of (node, hyperedge) pairs is as follows:
+            [(0, 0), (0, 1), (1, 1)]
+        then:
+            nodes      = [0, 0, 1]
+            hyperedges = [0, 1, 1]
     k : int, optional, default : 1
         Top-k hyperedge triplets
     min_weight : int, optional, default : 0
@@ -444,9 +479,7 @@ def max_common(H, k=1, min_weight=0):
             ("v3": third hyperedge)
         or empty list if no hyperedge triplet found
     """
-    G, _, cdict = H.incidence_matrix(index=True)
-
-    U, V, id_to_v = preprocessing(G, cdict, min_weight)
+    U, V, id_to_v = preprocessing(nodes, hyperedges, min_weight)
 
     maxWeight = min_weight - 1
 
@@ -510,10 +543,10 @@ def max_common(H, k=1, min_weight=0):
                 dc = len(V[c])
                 if dc > maxWeight:
                     intersections[c][b] = bc
-
+    
     return maxTriplets
-
-def local_independent(H, target_hyperedge, k=1, min_weight=0):
+    
+def local_independent(nodes, hyperedges, target_hyperedge, k=1, min_weight=0):
     """
     Returns the hyperedge triplets containing target_hyperedge with the highest independent weights.
 
@@ -521,7 +554,13 @@ def local_independent(H, target_hyperedge, k=1, min_weight=0):
 
     Parameters
     ----------
-    H : hnx.Hypergraph
+    nodes, hyperedges : lists of equal length
+        For each index i, nodes[i] is in hyperedges[i].
+        For example, if the edge list composed of (node, hyperedge) pairs is as follows:
+            [(0, 0), (0, 1), (1, 1)]
+        then:
+            nodes      = [0, 0, 1]
+            hyperedges = [0, 1, 1]
     target_hyperedge : string
         Target hyperedge for local traversal
     k : int, optional, default : 1
@@ -539,9 +578,7 @@ def local_independent(H, target_hyperedge, k=1, min_weight=0):
             ("v3": third hyperedge)
         or empty list if no hyperedge triplet found
     """
-    G, _, cdict = H.incidence_matrix(index=True)
-
-    U, V, id_to_v, target_hyperedge = preprocessing(G, cdict, min_weight, target_hyperedge=target_hyperedge)
+    U, V, id_to_v, target_hyperedge = preprocessing(nodes, hyperedges, min_weight, target_hyperedge=target_hyperedge)
 
     maxWeight = min_weight - 1
     a = target_hyperedge
@@ -549,25 +586,12 @@ def local_independent(H, target_hyperedge, k=1, min_weight=0):
     if target_hyperedge is None or len(V[a]) <= maxWeight:
         print("Target hyperedge does not have sufficient size")
         return []
-
+    
     da = len(V[a])
 
     vRight = len(V)
 
     maxTriplets = []
-
-    overlap_a = {}
-    for u in V[a]:
-        for b in U[u]:
-            if b == a:
-                continue
-            db = len(V[b])
-            if db <= maxWeight:
-                break
-            if b not in overlap_a:
-                overlap_a[b] = [u]
-            else:
-                overlap_a[b].append(u)
 
     overlap_a = {}
     for u in V[a]:
@@ -658,7 +682,7 @@ def local_independent(H, target_hyperedge, k=1, min_weight=0):
 
     return maxTriplets
 
-def local_disjoint(H, target_hyperedge, k=1, min_weight=0):
+def local_disjoint(nodes, hyperedges, target_hyperedge, k=1, min_weight=0):
     """
     Returns the hyperedge triplets containing target_hyperedge with the highest disjoint weights.
 
@@ -666,13 +690,19 @@ def local_disjoint(H, target_hyperedge, k=1, min_weight=0):
 
     Parameters
     ----------
-    H : hnx.Hypergraph
+    nodes, hyperedges : lists of equal length
+        For each index i, nodes[i] is in hyperedges[i].
+        For example, if the edge list composed of (node, hyperedge) pairs is as follows:
+            [(0, 0), (0, 1), (1, 1)]
+        then:
+            nodes      = [0, 0, 1]
+            hyperedges = [0, 1, 1]
     target_hyperedge : string
         Target hyperedge for local traversal
     k : int, optional, default : 1
         Top-k hyperedge triplets
     min_weight : int, optional, default : 0
-        Minimum disjoint weight of returned hyperedge triplet
+        Minimum independent weight of returned hyperedge triplet
 
     Returns
     -------
@@ -684,9 +714,7 @@ def local_disjoint(H, target_hyperedge, k=1, min_weight=0):
             ("v3": third hyperedge)
         or empty list if no hyperedge triplet found
     """
-    G, _, cdict = H.incidence_matrix(index=True)
-
-    U, V, id_to_v, target_hyperedge = preprocessing(G, cdict, min_weight, target_hyperedge=target_hyperedge)
+    U, V, id_to_v, target_hyperedge = preprocessing(nodes, hyperedges, min_weight, target_hyperedge=target_hyperedge)
 
     maxWeight = min_weight - 1
     a = target_hyperedge
@@ -772,7 +800,7 @@ def local_disjoint(H, target_hyperedge, k=1, min_weight=0):
 
     return maxTriplets
 
-def local_common(H, target_hyperedge, k=1, min_weight=0):
+def local_common(nodes, hyperedges, target_hyperedge, k=1, min_weight=0):
     """
     Returns the hyperedge triplets containing target_hyperedge with the highest common weights.
 
@@ -780,13 +808,19 @@ def local_common(H, target_hyperedge, k=1, min_weight=0):
 
     Parameters
     ----------
-    H : hnx.Hypergraph
+    nodes, hyperedges : lists of equal length
+        For each index i, nodes[i] is in hyperedges[i].
+        For example, if the edge list composed of (node, hyperedge) pairs is as follows:
+            [(0, 0), (0, 1), (1, 1)]
+        then:
+            nodes      = [0, 0, 1]
+            hyperedges = [0, 1, 1]
     target_hyperedge : string
         Target hyperedge for local traversal
     k : int, optional, default : 1
         Top-k hyperedge triplets
     min_weight : int, optional, default : 0
-        Minimum common weight of returned hyperedge triplet
+        Minimum independent weight of returned hyperedge triplet
 
     Returns
     -------
@@ -798,9 +832,7 @@ def local_common(H, target_hyperedge, k=1, min_weight=0):
             ("v3": third hyperedge)
         or empty list if no hyperedge triplet found
     """
-    G, _, cdict = H.incidence_matrix(index=True)
-
-    U, V, id_to_v, target_hyperedge = preprocessing(G, cdict, min_weight, target_hyperedge=target_hyperedge)
+    U, V, id_to_v, target_hyperedge = preprocessing(nodes, hyperedges, min_weight, target_hyperedge=target_hyperedge)
 
     maxWeight = min_weight - 1
     a = target_hyperedge
@@ -884,7 +916,7 @@ def local_common(H, target_hyperedge, k=1, min_weight=0):
     
     return maxTriplets
 
-def max_triplets(H, weight_type, k=1, min_weight=0):
+def max_triplets(nodes, hyperedges, weight_type, k=1, min_weight=0):
     """
     Returns the hyperedge triplets with the highest weights.
     For more information, see:
@@ -893,7 +925,13 @@ def max_triplets(H, weight_type, k=1, min_weight=0):
 
     Parameters
     ----------
-    H : hnx.Hypergraph
+    nodes, hyperedges : lists of equal length
+        For each index i, nodes[i] is in hyperedges[i].
+        For example, if the edge list composed of (node, hyperedge) pairs is as follows:
+            [(0, 0), (0, 1), (1, 1)]
+        then:
+            nodes      = [0, 0, 1]
+            hyperedges = [0, 1, 1]
     weight_type : string
         Type in ["independent", "disjoint", common"]
     k : int, optional, default : 1
@@ -913,16 +951,16 @@ def max_triplets(H, weight_type, k=1, min_weight=0):
     """
     
     if weight_type == "independent":
-        return max_independent(H, k, min_weight)
+        return max_independent(nodes, hyperedges, k, min_weight)
     elif weight_type == "disjoint":
-        return max_disjoint(H, k, min_weight)
+        return max_disjoint(nodes, hyperedges, k, min_weight)
     elif weight_type == "common":
-        return max_common(H, k, min_weight)
+        return max_common(nodes, hyperedges, k, min_weight)
     else:
         print("Invalid weight type, must be in [independent, disjoint, common]")
         return []
 
-def local_triplets(H, weight_type, target_hyperedge, k=1, min_weight=0):
+def local_triplets(nodes, hyperedges, weight_type, target_hyperedge, k=1, min_weight=0):
     """
     Returns the hyperedge triplets containing target_hyperedge with the highest weights.
 
@@ -930,7 +968,13 @@ def local_triplets(H, weight_type, target_hyperedge, k=1, min_weight=0):
 
     Parameters
     ----------
-    H : hnx.Hypergraph
+    nodes, hyperedges : lists of equal length
+        For each index i, nodes[i] is in hyperedges[i].
+        For example, if the edge list composed of (node, hyperedge) pairs is as follows:
+            [(0, 0), (0, 1), (1, 1)]
+        then:
+            nodes      = [0, 0, 1]
+            hyperedges = [0, 1, 1]
     weight_type : string
         Type in ["independent", "disjoint", common"]
     target_hyperedge : string
@@ -952,12 +996,11 @@ def local_triplets(H, weight_type, target_hyperedge, k=1, min_weight=0):
     """
     
     if weight_type == "independent":
-        return local_independent(H, target_hyperedge, k, min_weight)
+        return local_independent(nodes, hyperedges, target_hyperedge, k, min_weight)
     elif weight_type == "disjoint":
-        return local_disjoint(H, target_hyperedge, k, min_weight)
+        return local_disjoint(nodes, hyperedges, target_hyperedge, k, min_weight)
     elif weight_type == "common":
-        return local_common(H, target_hyperedge, k, min_weight)
+        return local_common(nodes, hyperedges, target_hyperedge, k, min_weight)
     else:
         print("Invalid weight type, must be in [independent, disjoint, common]")
         return []
-    

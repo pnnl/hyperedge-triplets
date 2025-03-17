@@ -6,20 +6,20 @@ warnings.simplefilter("ignore")
 
 def test_max_independent(fish):
     H = fish.hypergraph
-    max_triplet = max_independent(H)
-    assert max_triplet['weight'] == 2
+    res = max_triplets(H, "independent")
+    assert res[0]['weight'] == 2
 
 def test_max_disjoint(fish):
     H = fish.hypergraph
-    max_triplet = max_disjoint(H)
-    assert max_triplet['weight'] == 1
+    res = max_triplets(H, "disjoint")
+    assert res[0]['weight'] == 1
 
 def test_max_common(fish):
     H = fish.hypergraph
-    max_triplet = max_common(H, 2)
+    res = max_triplets(H, "common", 2)
 
-    assert max_triplet == {}
+    assert len(res) == 2
 
-    max_triplet = max_common(H)
+    res = max_triplets(H, "common")
 
-    assert max_triplet['weight'] == 1
+    assert res[0]['weight'] == 1
